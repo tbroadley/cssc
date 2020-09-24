@@ -45,19 +45,19 @@ func (p *parser) parseSelector() *ast.Selector {
 			p.lexer.Errorf("unexpected EOF")
 
 		case lexer.Whitespace:
-			s.Parts = append(s.Parts, &ast.Whitespace{Span: p.lexer.StartSpan()})
+			s.Parts = append(s.Parts, &ast.Whitespace{Span: p.lexer.TokenSpan()})
 			p.lexer.Next()
 
 		case lexer.Ident:
 			s.Parts = append(s.Parts, &ast.TypeSelector{
-				Span: p.lexer.StartSpan(),
+				Span: p.lexer.TokenSpan(),
 				Name: p.lexer.CurrentString,
 			})
 			p.lexer.Next()
 
 		case lexer.Hash:
 			s.Parts = append(s.Parts, &ast.IDSelector{
-				Span: p.lexer.StartSpan(),
+				Span: p.lexer.TokenSpan(),
 				Name: p.lexer.CurrentString,
 			})
 			p.lexer.Next()
@@ -66,22 +66,23 @@ func (p *parser) parseSelector() *ast.Selector {
 			switch p.lexer.CurrentString {
 			case ".":
 				p.lexer.Next()
-				s.Parts = append(s.Parts, &ast.ClassSelector{
+				cls := &ast.ClassSelector{
 					Span: p.lexer.StartSpan(),
 					Name: p.lexer.CurrentString,
-				})
-				p.lexer.Expect(lexer.Ident)
+				}
+				s.Parts = append(s.Parts, cls)
+				p.lexer.CloseAndExpect(cls, lexer.Ident)
 
 			case "+", ">", "~", "|":
 				s.Parts = append(s.Parts, &ast.CombinatorSelector{
-					Span:     p.lexer.StartSpan(),
+					Span:     p.lexer.TokenSpan(),
 					Operator: p.lexer.CurrentString,
 				})
 				p.lexer.Next()
 
 			case "*":
 				s.Parts = append(s.Parts, &ast.TypeSelector{
-					Span: p.lexer.StartSpan(),
+					Span: p.lexer.TokenSpan(),
 					Name: p.lexer.CurrentString,
 				})
 				p.lexer.Next()
@@ -109,6 +110,7 @@ func (p *parser) parseSelector() *ast.Selector {
 
 			switch p.lexer.Current {
 			case lexer.Ident:
+				p.lexer.CloseSpan(pc)
 				p.lexer.Next()
 
 			case lexer.FunctionStart:
@@ -128,27 +130,28 @@ func (p *parser) parseSelector() *ast.Selector {
 							p.lexer.Errorf("expected even, odd, or an+b syntax")
 						}
 						pc.Arguments = &ast.Identifier{
-							Span:  p.lexer.StartSpan(),
+							Span:  p.lexer.TokenSpan(),
 							Value: p.lexer.CurrentString,
 						}
 						p.lexer.Next()
 					}
-					p.lexer.Expect(lexer.RParen)
-
 				} else {
 					pc.Arguments = p.parseSelectorList()
-					p.lexer.Expect(lexer.RParen)
 				}
+				p.lexer.CloseSpan(pc)
+				p.lexer.Expect(lexer.RParen)
 
 			default:
 				p.lexer.Errorf("unexpected token: %s", p.lexer.Current.String())
 			}
 
 			if wrapper {
-				s.Parts = append(s.Parts, &ast.PseudoElementSelector{
+				wrapped := &ast.PseudoElementSelector{
 					Span:  wrapperLocation,
 					Inner: pc,
-				})
+				}
+				wrapped.End = pc.End
+				s.Parts = append(s.Parts, wrapped)
 				break
 			}
 
@@ -164,7 +167,7 @@ func (p *parser) parseSelector() *ast.Selector {
 			p.lexer.Expect(lexer.Ident)
 			if p.lexer.Current == lexer.RBracket {
 				s.Parts = append(s.Parts, attr)
-				p.lexer.Next()
+				p.lexer.CloseAndNext(attr)
 				break
 			}
 
@@ -183,6 +186,10 @@ func (p *parser) parseSelector() *ast.Selector {
 				}
 
 				attr.Value = p.parseValue()
+				if attr.Value == nil {
+					p.lexer.Errorf("value must be specified")
+				}
+				attr.End = attr.Value.Location().End
 				s.Parts = append(s.Parts, attr)
 			}
 
@@ -192,6 +199,7 @@ func (p *parser) parseSelector() *ast.Selector {
 			if len(s.Parts) == 0 {
 				p.lexer.Errorf("expected selector")
 			}
+			s.End = s.Parts[len(s.Parts)-1].Location().End
 			return s
 		}
 	}
@@ -203,9 +211,9 @@ func (p *parser) parseANPlusB() *ast.ANPlusB {
 	defer func() {
 		p.lexer.RetainWhitespace = prev
 	}()
-	v := &ast.ANPlusB{
-		Span: p.lexer.StartSpan(),
-	}
+
+	v := &ast.ANPlusB{Span: p.lexer.StartSpan()}
+
 	if p.lexer.Current == lexer.Number {
 		v.A = p.lexer.CurrentNumeral
 		p.lexer.Next()
@@ -214,6 +222,7 @@ func (p *parser) parseANPlusB() *ast.ANPlusB {
 	if p.lexer.CurrentString != "n" {
 		p.lexer.Errorf("expected literal n as part of An+B")
 	}
+	p.lexer.CloseSpan(v)
 	p.lexer.Expect(lexer.Ident)
 
 	if p.lexer.Current == lexer.Delim && (p.lexer.CurrentString == "+" || p.lexer.CurrentString == "-") {
@@ -221,6 +230,7 @@ func (p *parser) parseANPlusB() *ast.ANPlusB {
 		p.lexer.Next()
 
 		v.B = p.lexer.CurrentNumeral
+		p.lexer.CloseSpan(v)
 		p.lexer.Expect(lexer.Number)
 	}
 	return v

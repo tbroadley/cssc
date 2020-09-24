@@ -106,6 +106,30 @@ func (l *Lexer) StartSpan() ast.Span {
 	return ast.Span{Start: l.start}
 }
 
+// CloseSpan sets the end position for a node to the end location of the current token. It
+// is okay to call CloseSpan multiple times if the true end of a node is not yet known.
+func (l *Lexer) CloseSpan(n ast.Node) {
+	n.Location().End = l.lastPos
+}
+
+// TokenSpan creates a span that starts and ends with the current token. This is useful
+// for creating single-token AST nodes, e.g. commas.
+func (l *Lexer) TokenSpan() ast.Span {
+	return ast.Span{Start: l.start, End: l.lastPos}
+}
+
+// CloseAndNext calls CloseSpan then Next.
+func (l *Lexer) CloseAndNext(s ast.Node) {
+	l.CloseSpan(s)
+	l.Next()
+}
+
+// CloseAndExpect calls CloseSpan then Expect.
+func (l *Lexer) CloseAndExpect(s ast.Node, token Token) {
+	l.CloseSpan(s)
+	l.Expect(token)
+}
+
 // Range is the start to end offset of the current token in the source. The returned
 // start should be the same as Location() and the end is the last position stepped through,
 // i.e. l.lastPos.

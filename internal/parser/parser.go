@@ -59,7 +59,7 @@ func (p *parser) parse() {
 
 		case lexer.Comment:
 			p.ss.Nodes = append(p.ss.Nodes, &ast.Comment{
-				Span: p.lexer.StartSpan(),
+				Span: p.lexer.TokenSpan(),
 				Text: p.lexer.CurrentString,
 			})
 			p.lexer.Next()
@@ -127,11 +127,11 @@ func (p *parser) parseQualifiedRule(isKeyframes bool) *ast.QualifiedRule {
 						if !isImportantString(p.lexer.CurrentString) {
 							p.lexer.Errorf("expected !important, unexpected token: %s", p.lexer.CurrentString)
 						}
-						p.lexer.Next()
+						p.lexer.CloseAndNext(decl)
 						decl.Important = true
 
 					case lexer.Comma:
-						decl.Values = append(decl.Values, &ast.Comma{Span: p.lexer.StartSpan()})
+						decl.Values = append(decl.Values, &ast.Comma{Span: p.lexer.TokenSpan()})
 						p.lexer.Next()
 
 					default:
@@ -140,6 +140,10 @@ func (p *parser) parseQualifiedRule(isKeyframes bool) *ast.QualifiedRule {
 							if len(decl.Values) == 0 {
 								p.lexer.Errorf("declaration must have a value")
 							}
+							if lastValueEnd := decl.Values[len(decl.Values)-1].Location().End; lastValueEnd > decl.End {
+								decl.End = lastValueEnd
+							}
+
 							block.Declarations = append(block.Declarations, decl)
 
 							break values
@@ -153,7 +157,8 @@ func (p *parser) parseQualifiedRule(isKeyframes bool) *ast.QualifiedRule {
 					p.lexer.Next()
 				}
 			}
-			p.lexer.Next()
+			p.lexer.CloseAndNext(block)
+			r.End = block.End
 			return r
 
 		default:
@@ -180,7 +185,7 @@ func (p *parser) parseKeyframeSelectorList() *ast.KeyframeSelectorList {
 		switch p.lexer.Current {
 		case lexer.Percentage:
 			l.Selectors = append(l.Selectors, &ast.Percentage{
-				Span:  p.lexer.StartSpan(),
+				Span:  p.lexer.TokenSpan(),
 				Value: p.lexer.CurrentNumeral,
 			})
 
@@ -189,7 +194,7 @@ func (p *parser) parseKeyframeSelectorList() *ast.KeyframeSelectorList {
 				p.lexer.Errorf("unexpected string: %s. keyframe selector can only be from, to, or a percentage", p.lexer.CurrentString)
 			}
 			l.Selectors = append(l.Selectors, &ast.Identifier{
-				Span:  p.lexer.StartSpan(),
+				Span:  p.lexer.TokenSpan(),
 				Value: p.lexer.CurrentString,
 			})
 
@@ -206,6 +211,11 @@ func (p *parser) parseKeyframeSelectorList() *ast.KeyframeSelectorList {
 		break
 	}
 
+	if len(l.Selectors) == 0 {
+		p.lexer.Errorf("keyframes rule must have at least one selector (from, to, or a percentage)")
+	}
+
+	l.End = l.Selectors[len(l.Selectors)-1].Location().End
 	return l
 }
 
@@ -257,7 +267,7 @@ func (p *parser) parseValue() ast.Value {
 	case lexer.Dimension:
 		defer p.lexer.Next()
 		return &ast.Dimension{
-			Span: p.lexer.StartSpan(),
+			Span: p.lexer.TokenSpan(),
 
 			Unit:  p.lexer.CurrentString,
 			Value: p.lexer.CurrentNumeral,
@@ -266,7 +276,7 @@ func (p *parser) parseValue() ast.Value {
 	case lexer.Percentage:
 		defer p.lexer.Next()
 		return &ast.Dimension{
-			Span:  p.lexer.StartSpan(),
+			Span:  p.lexer.TokenSpan(),
 			Unit:  "%",
 			Value: p.lexer.CurrentNumeral,
 		}
@@ -274,34 +284,34 @@ func (p *parser) parseValue() ast.Value {
 	case lexer.Number:
 		defer p.lexer.Next()
 		return &ast.Dimension{
-			Span:  p.lexer.StartSpan(),
+			Span:  p.lexer.TokenSpan(),
 			Value: p.lexer.CurrentNumeral,
 		}
 
 	case lexer.Ident:
 		defer p.lexer.Next()
 		return &ast.Identifier{
-			Span:  p.lexer.StartSpan(),
+			Span:  p.lexer.TokenSpan(),
 			Value: p.lexer.CurrentString,
 		}
 
 	case lexer.Hash:
 		defer p.lexer.Next()
 		return &ast.HexColor{
-			Span: p.lexer.StartSpan(),
+			Span: p.lexer.TokenSpan(),
 			RGBA: p.lexer.CurrentString,
 		}
 
 	case lexer.String:
 		defer p.lexer.Next()
 		return &ast.String{
-			Span:  p.lexer.StartSpan(),
+			Span:  p.lexer.TokenSpan(),
 			Value: p.lexer.CurrentString,
 		}
 
 	case lexer.FunctionStart:
 		fn := &ast.Function{
-			Span: p.lexer.StartSpan(),
+			Span: p.lexer.TokenSpan(),
 			Name: p.lexer.CurrentString,
 		}
 		p.lexer.Next()
@@ -314,7 +324,7 @@ func (p *parser) parseValue() ast.Value {
 				break arguments
 			case lexer.Comma:
 				fn.Arguments = append(fn.Arguments, &ast.Comma{
-					Span: p.lexer.StartSpan(),
+					Span: p.lexer.TokenSpan(),
 				})
 				p.lexer.Next()
 			default:
@@ -365,7 +375,7 @@ func (p *parser) parseImportAtRule() {
 
 	switch p.lexer.Current {
 	case lexer.URL:
-		prelude.Span = p.lexer.StartSpan()
+		prelude.Span = p.lexer.TokenSpan()
 		prelude.Value = p.lexer.CurrentString
 		p.ss.Imports = append(p.ss.Imports, ast.ImportSpecifier{
 			Value:  prelude.Value,
@@ -389,7 +399,7 @@ func (p *parser) parseImportAtRule() {
 		p.lexer.Expect(lexer.RParen)
 
 	case lexer.String:
-		prelude.Span = p.lexer.StartSpan()
+		prelude.Span = p.lexer.TokenSpan()
 		prelude.Value = p.lexer.CurrentString
 		p.ss.Imports = append(p.ss.Imports, ast.ImportSpecifier{
 			Value:  prelude.Value,
@@ -422,13 +432,13 @@ func (p *parser) parseKeyframes() {
 	switch p.lexer.Current {
 	case lexer.String:
 		r.Preludes = append(r.Preludes, &ast.String{
-			Span:  p.lexer.StartSpan(),
+			Span:  p.lexer.TokenSpan(),
 			Value: p.lexer.CurrentString,
 		})
 
 	case lexer.Ident:
 		r.Preludes = append(r.Preludes, &ast.Identifier{
-			Span:  p.lexer.StartSpan(),
+			Span:  p.lexer.TokenSpan(),
 			Value: p.lexer.CurrentString,
 		})
 
@@ -449,7 +459,8 @@ func (p *parser) parseKeyframes() {
 
 		case lexer.RCurly:
 			p.ss.Nodes = append(p.ss.Nodes, r)
-			p.lexer.Next()
+			p.lexer.CloseSpan(block)
+			p.lexer.CloseAndNext(r)
 			return
 
 		default:
@@ -481,7 +492,8 @@ func (p *parser) parseMediaAtRule() {
 
 		case lexer.RCurly:
 			p.ss.Nodes = append(p.ss.Nodes, r)
-			p.lexer.Next()
+			p.lexer.CloseSpan(block)
+			p.lexer.CloseAndNext(r)
 			return
 
 		default:
@@ -517,6 +529,7 @@ func (p *parser) parseMediaQueryList() *ast.MediaQueryList {
 		return nil
 	}
 
+	l.End = l.Queries[len(l.Queries)-1].End
 	return l
 }
 
@@ -529,7 +542,6 @@ func (p *parser) parseMediaQuery() *ast.MediaQuery {
 		switch p.lexer.Current {
 		case lexer.EOF:
 			p.lexer.Errorf("unexpected EOF")
-			return q
 
 		case lexer.LParen:
 			q.Parts = append(q.Parts, p.parseMediaFeature())
@@ -539,6 +551,7 @@ func (p *parser) parseMediaQuery() *ast.MediaQuery {
 
 		default:
 			if len(q.Parts) > 0 {
+				q.End = q.Parts[len(q.Parts)-1].Location().End
 				return q
 			}
 
@@ -562,6 +575,7 @@ func (p *parser) parseMediaFeature() ast.MediaFeature {
 			p.lexer.Errorf("expected identifier in media feature with no value")
 		}
 
+		startLoc.End = ident.End
 		return &ast.MediaFeaturePlain{
 			Span:     startLoc,
 			Property: ident,
@@ -577,12 +591,14 @@ func (p *parser) parseMediaFeature() ast.MediaFeature {
 
 		secondValue := p.parseValue()
 
-		p.lexer.Expect(lexer.RParen)
-		return &ast.MediaFeaturePlain{
+		plain := &ast.MediaFeaturePlain{
 			Span:     startLoc,
 			Property: ident,
 			Value:    secondValue,
 		}
+		// XXX: this one excludes the right paren even though the left paren is included.
+		p.lexer.CloseAndExpect(plain, lexer.RParen)
+		return plain
 
 	case lexer.Delim:
 		r := &ast.MediaFeatureRange{
@@ -686,8 +702,8 @@ func (p *parser) parseCustomMediaAtRule() {
 	if len(queries.Queries) != 1 {
 		p.lexer.Errorf("@custom-media rule requires a single media query argument")
 	}
-	r.Preludes = append(r.Preludes)
 	r.Preludes = append(r.Preludes, queries.Queries[0])
+	r.End = queries.Queries[0].End
 
 	p.ss.Nodes = append(p.ss.Nodes, r)
 }
