@@ -468,6 +468,16 @@ func (t *transformer) transformValues(values []ast.Value) []ast.Value {
 					return
 				}
 
+				if mathExpression, isMathExpression := newValue.(*ast.MathExpression); isMathExpression {
+					newValues = []ast.Value{
+						&ast.Function{
+							Name:      "calc",
+							Arguments: []ast.Value{mathExpression},
+						},
+					}
+					return
+				}
+
 				newValues = []ast.Value{newValue}
 			}()
 
@@ -559,11 +569,63 @@ func (t *transformer) evaluateMathExpression(l, r ast.Value, op string) ast.Valu
 				Unit:  left.Unit,
 			}
 
-		// case *ast.MathExpression:
-		// if left.op is not + or -, return nil
+		case *ast.MathExpression:
+			if left.Operator != "+" && left.Operator != "-" {
+				return nil
+			}
 
-		// We know left.Right is an ast.Dimension because of the structure of the parse tree
-		// We know Right is an ast.Dimension
+			rightOfLeft, rightOfLeftOk := left.Right.(*ast.Dimension)
+			_, leftOfLeftOk := left.Left.(*ast.Dimension)
+			if !rightOfLeftOk && !leftOfLeftOk {
+				return nil
+			}
+
+			right, ok := r.(*ast.Dimension)
+			if !ok {
+				return nil
+			}
+
+			if rightOfLeftOk && rightOfLeft.Unit != right.Unit {
+				return nil
+			}
+
+			normalizedRightOfLeftValue := rightOfLeft.Value
+			if left.Operator == "-" {
+				normalizedRightOfLeftValue = "-" + normalizedRightOfLeftValue
+			}
+
+			normalizedRightValue := right.Value
+			if op == "-" {
+				normalizedRightValue = "-" + normalizedRightValue
+			}
+
+			newValue, err := t.doMath(normalizedRightOfLeftValue, normalizedRightValue, "+")
+			if err != nil {
+				t.addError(l.Location(), err.Error())
+				return nil
+			}
+
+			if newValue == 0 {
+				return left.Left
+			}
+
+			newOp := "+"
+			if newValue < 0 {
+				newValue = -newValue
+				newOp = "-"
+			}
+
+			return &ast.MathExpression{
+				Left: left.Left,
+				Right: &ast.Dimension{
+					Value: strconv.FormatFloat(newValue, 'f', -1, 64),
+					Unit:  right.Unit,
+				},
+				Operator: newOp,
+			}
+
+		// If left.Right is an ast.MathExpression, return nil
+		// If Right is an ast.MathExpression, return nil
 		// If left.Right.Unit != right.Unit and left.Left.Unit != right.Unit, return nil
 		// left.Right.Unit case: doMath on left.Right.Value and right.Value and return left with Right = [the result of doMath]
 		// left.Left.Unit case: doMath on left.Left.Value and right.Value and return left with Left = [the result of doMath]
