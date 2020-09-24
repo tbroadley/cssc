@@ -82,7 +82,7 @@ func (p *printer) printMapping() {
 
 // addMapping should be called from the printer
 // when a new symbol needs to be added to the sourcemap.
-func (p *printer) addMapping(loc ast.Loc) {
+func (p *printer) addMapping(loc ast.Span) {
 	if p.options.OriginalSource == nil {
 		return
 	}
@@ -132,7 +132,7 @@ func (p *printer) print(in ast.Node) {
 		}
 
 	case *ast.AtRule:
-		p.addMapping(node.Loc)
+		p.addMapping(node.Span)
 		p.s.WriteRune('@')
 		p.s.WriteString(node.Name)
 		if len(node.Preludes) > 0 {
